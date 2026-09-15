@@ -3,27 +3,29 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"math/rand/v2"
 	"net/http"
-
 	"net/url"
+
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-type URL struct{
-	URL string `json:"url"`
+type Url struct {
+	Url string `json:"url"`
 }
 
-type Code struct {
+type ShortCode struct {
 	Code string `json:"code"`
 }
 
 func main() {
-
 	ctx := context.Background()
 
+	// Connects to the database
 	pool, err := connectDB(ctx, "postgres://myuser:mypassword@localhost:5432/url-shortener")
 	if err != nil {
 		log.Fatalf("db connection error: %v", err)
@@ -31,24 +33,29 @@ func main() {
 
 	defer pool.Close()
 
+	// Create the table urls if it does not exist
+	if err := createTable(ctx, pool); err != nil {
+		log.Fatal(err)
+	}
+
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /{code}", func(w http.ResponseWriter, r *http.Request) {
 
 		code := r.PathValue("code")
 
-		fullURL, err := getURL(code, r.Context(), pool)
+		fullUrl, err := getUrl(r.Context(), pool, code)
 		if err != nil {
 			http.Error(w, "Error: Short Code not found", http.StatusNotFound)
 			return
 		}
 
-		http.Redirect(w, r, fullURL, http.StatusFound)
+		http.Redirect(w, r, fullUrl, http.StatusFound)
 	})
 
 	mux.HandleFunc("POST /shorten", func(w http.ResponseWriter, r *http.Request) {
 
-		var u URL
+		var u Url
 
 		err := json.NewDecoder(r.Body).Decode(&u)
 		if err != nil {
@@ -56,39 +63,38 @@ func main() {
 			return
 		}
 
-		parsed, err := url.ParseRequestURI(u.URL)
+		parsed, err := url.ParseRequestURI(u.Url)
 		if err != nil || parsed.Host == "" {
 			http.Error(w, "Invalid URL: ", http.StatusBadRequest)
 			return
 		}
 
-		randomCode, err := shorten(u.URL, r.Context(), pool)
+		shortCode, err := shorten(r.Context(), u.Url, pool)
 		if err != nil {
-			fmt.Fprint(w, err)
+			log.Printf("shorten error: %v", err)
+			http.Error(w, "failed to create short url", http.StatusInternalServerError)
 			return
 		}
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(map[string]string {
-			"code": randomCode,
-		})
+		json.NewEncoder(w).Encode(ShortCode{Code: shortCode})
 	})
 
-	http.ListenAndServe(":8080", mux)
+	log.Fatal(http.ListenAndServe(":8080", mux))
 }
 
-func generateCode() string {
+func generateShortCode() string {
 
-	allCharacters := "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	chars := "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 
-	sixRandomChar := ""
+	shortCode := make([]byte, 6)
 
 	for i := 0; i < 6; i++ {
-		sixRandomChar += string(allCharacters[rand.IntN(len(allCharacters))])
+		shortCode[i] = chars[rand.IntN(len(chars))]
 	}
 
-	return sixRandomChar
+	return string(shortCode)
 }
 
 func connectDB(ctx context.Context, connString string) (*pgxpool.Pool, error) {
@@ -120,7 +126,7 @@ func createTable(ctx context.Context, pool *pgxpool.Pool) error {
 	return nil
 }
 
-func insertNewURL(randomCode string, fullURL string, ctx context.Context, pool *pgxpool.Pool) error {
+func insertNewURL(ctx context.Context, randomCode string, fullURL string, pool *pgxpool.Pool) error {
 
 	_, err := pool.Exec(ctx, "INSERT INTO urls (shortCode, fullURL) VALUES ($1, $2)", randomCode, fullURL)
 	if err != nil {
@@ -130,27 +136,35 @@ func insertNewURL(randomCode string, fullURL string, ctx context.Context, pool *
 	return nil
 }
 
-func shorten(fullURL string, ctx context.Context, pool *pgxpool.Pool) (string, error) {
-
-	err := createTable(ctx, pool)
-	if err != nil {
-		log.Fatal(err)
+func shorten(ctx context.Context, fullUrl string, pool *pgxpool.Pool) (string, error) {
+	maxAttempt := 10
+	for i := 0; i < maxAttempt; i++ {
+		shortCode := generateShortCode()
+		err := insertNewURL(ctx, shortCode, fullUrl, pool)
+		if err == nil {
+			return shortCode, nil
+		}
+		if !isUniqueViolation(err) {
+			return "", fmt.Errorf("insert failed: %w", err)
+		}
 	}
 
-	randomCode := generateCode()
-	err = insertNewURL(randomCode, fullURL, ctx, pool)
-	if err != nil {
-		return "",fmt.Errorf("Error inserting: %w", err)
-	}
-
-	return randomCode, nil
+	return "", fmt.Errorf("failed to generate a unique code after %d attempts", maxAttempt)
 }
 
-func getURL(code string, ctx context.Context, pool *pgxpool.Pool) (string, error) {
+func getUrl(ctx context.Context, pool *pgxpool.Pool, code string) (string, error) {
 	var fullURL string
 	err := pool.QueryRow(ctx, "SELECT fullURL FROM urls WHERE shortCode = $1", code).Scan(&fullURL)
 	if err != nil {
-		return "", fmt.Errorf("Select failed: %v", err)
+		return "", fmt.Errorf("Select failed: %w", err)
 	}
 	return fullURL, nil
+}
+
+func isUniqueViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		return pgErr.Code == "23505" // Postgres unique_violation code
+	}
+	return false
 }
