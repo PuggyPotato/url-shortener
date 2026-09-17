@@ -9,9 +9,12 @@ import (
 	"math/rand/v2"
 	"net/http"
 	"net/url"
+	"os"
 
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/joho/godotenv"
 )
 
 type Url struct {
@@ -24,9 +27,10 @@ type ShortCode struct {
 
 func main() {
 	ctx := context.Background()
+	godotenv.Load()
 
 	// Connects to the database
-	pool, err := connectDB(ctx, "postgres://myuser:mypassword@localhost:5432/url-shortener")
+	pool, err := connectDB(ctx, os.Getenv("DATABASE_URL"))
 	if err != nil {
 		log.Fatalf("db connection error: %v", err)
 	}
@@ -81,7 +85,11 @@ func main() {
 		json.NewEncoder(w).Encode(ShortCode{Code: shortCode})
 	})
 
-	log.Fatal(http.ListenAndServe(":8080", mux))
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+	log.Fatal(http.ListenAndServe(":"+port,mux))
 }
 
 func generateShortCode() string {
