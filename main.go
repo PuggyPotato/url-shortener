@@ -44,6 +44,8 @@ func main() {
 
 	mux := http.NewServeMux()
 
+	//mux.HandleFunc("GET /{$}", http.FileServer(http.Dir("./static")))
+
 	mux.HandleFunc("GET /{code}", func(w http.ResponseWriter, r *http.Request) {
 
 		code := r.PathValue("code")
@@ -177,9 +179,17 @@ func isUniqueViolation(err error) bool {
 	return false
 }
 
+var allowedOrigins = map[string]bool {
+	"https://puggypotato.com": true,
+	"https://tqyx.me/": true,
+}
+
 func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "https://puggypotato.com")
+		origin := r.Header.Get("Origin")
+		if allowedOrigins[origin] {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+		}
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 
