@@ -44,8 +44,6 @@ func main() {
 
 	mux := http.NewServeMux()
 
-	//mux.HandleFunc("GET /{$}", http.FileServer(http.Dir("./static")))
-
 	mux.HandleFunc("GET /{code}", func(w http.ResponseWriter, r *http.Request) {
 
 		code := r.PathValue("code")
