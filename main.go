@@ -89,7 +89,7 @@ func main() {
 	if port == "" {
 		port = "8080"
 	}
-	log.Fatal(http.ListenAndServe(":"+port,mux))
+	log.Fatal(http.ListenAndServe(":"+port,corsMiddleware(mux)))
 }
 
 func generateShortCode() string {
@@ -175,4 +175,19 @@ func isUniqueViolation(err error) bool {
 		return pgErr.Code == "23505" // Postgres unique_violation code
 	}
 	return false
+}
+
+func corsMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "https://www.puggypotato.com")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+
+		if r.Method == "OPTIONS" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
 }
