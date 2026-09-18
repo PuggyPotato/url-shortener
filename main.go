@@ -179,7 +179,7 @@ func isUniqueViolation(err error) bool {
 
 var allowedOrigins = map[string]bool {
 	"https://puggypotato.com": true,
-	"https://tqyx.me/": true,
+	"https://tqyx.me": true,
 }
 
 func corsMiddleware(next http.Handler) http.Handler {
